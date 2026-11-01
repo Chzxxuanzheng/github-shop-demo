@@ -1,0 +1,42 @@
+name: 发布组件
+title: "Component: {name}"
+description: 发布组件到 xxx牌 组件商店
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 发布须知
+
+        这玩意只是个测试...
+
+  - type: input
+    id: repo
+    attributes:
+      label: 仓库连接
+      description: 你的仓库连接，必须是公开仓库
+      placeholder: e.g. https://github.com/Chzxxuanzheng/github-shop-item-demo
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        其实还可以要求填点其他东西...但是直接去仓库里读就行了。
+
+  - type: checkboxes
+    attributes:
+      label: 最终确认
+      description: 发布前再做下检查
+      options:
+        - label: 检查项A
+          required: true
+        - label: 检查项B
+          required: true
+        - label: 检查项C
+          required: true
+
+  - type: checkboxes
+    attributes:
+      label: 运行自动检测
+      options:
+        - label: 点我(重新)运行自动化测试
