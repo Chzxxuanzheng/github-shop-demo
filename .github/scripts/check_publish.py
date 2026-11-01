@@ -56,6 +56,7 @@ MAX_COMMENT_LENGTH = 60000
 MAX_LOG_CHARS = 3500
 
 # 用于在 Issue 评论中识别「本机器人发布的评论」的隐藏标记
+# 校验 CI 与收录 CI 共用这个标记，因此始终只维护同一条评论
 COMMENT_MARKER = '<!-- shop-publish-bot -->'
 
 # Issue 表单中「运行自动检测」复选框的两种文案：
@@ -332,6 +333,31 @@ def check_meta(root: Path) -> tuple[dict[str, Any] | None, Check]:
 	)
 
 
+def extract_items(data: Any) -> list[dict[str, Any]]:
+	"""把 items.json 的各种结构统一成「组件记录列表」。
+
+	支持的形态::
+
+		[...]                       # 数组，最推荐的写法
+		{"items": [...]}            # 带包装的数组
+		{"items": {id: {...}}}      # 以 id 为键的对象
+		{id: {...}}                 # 直接以 id 为键的对象
+	"""
+	if isinstance(data, list):
+		return [item for item in data if isinstance(item, dict)]
+
+	if isinstance(data, dict):
+		inner = data.get('items')
+		if isinstance(inner, list):
+			return [item for item in inner if isinstance(item, dict)]
+		if isinstance(inner, dict):
+			return [item for item in inner.values() if isinstance(item, dict)]
+		# 直接以 id 为键的对象，但排除 {"items": ...} 之外的空壳
+		return [item for item in data.values() if isinstance(item, dict)]
+
+	return []
+
+
 def check_duplicate_id(meta: dict[str, Any] | None, items_path: Path) -> Check:
 	"""检查 id 是否与 items.json 中已收录的组件重复。"""
 	name = 'ID 唯一性'
@@ -351,21 +377,19 @@ def check_duplicate_id(meta: dict[str, Any] | None, items_path: Path) -> Check:
 	except (OSError, json.JSONDecodeError) as exc:
 		return Check(name, False, f'无法解析 `{items_path.name}`: {exc}')
 
-	if not isinstance(items, dict):
-		return Check(name, True, f'`{items_path.name}` 不是对象结构，跳过重复校验。')
+	if not isinstance(items, (dict, list)):
+		return Check(name, True, f'`{items_path.name}` 结构异常，跳过重复校验。')
 
-	# 支持 {id: {...}} 与 {..., "items": [...]} 两种结构
-	existing = items
-	if isinstance(items.get('items'), dict):
-		existing = items['items']
+	# 统一成列表后按 id 字段比对，兼容数组与对象两种结构
+	record: dict[str, Any] | None = None
+	for item in extract_items(items):
+		if str(item.get('id') or '').strip() == new_id:
+			record = item
+			break
 
-	if new_id not in existing:
+	if record is None:
 		return Check(name, True, f'`id` = `{new_id}` 未被占用。')
-
-	record = existing[new_id]
-	owner = ''
-	if isinstance(record, dict):
-		owner = str(record.get('repo') or record.get('url') or '').strip()
+	owner = str(record.get('repo') or record.get('url') or '').strip()
 
 	detail = f'`id` = `{new_id}` 已存在于 `{items_path.name}`'
 	if owner:
@@ -580,7 +604,11 @@ def _api_request(
 
 
 def publish_comment(issue_number: str, body: str) -> Check:
-	"""把检查结果发布到 Issue：已存在则编辑，否则新建。"""
+	"""把正文发布到 Issue：已存在机器人评论则整条覆盖，否则新建。
+
+	校验 CI 与收录 CI 共用同一条评论（靠 ``COMMENT_MARKER`` 定位），
+	后跑的那次会直接覆盖正文，保证 Issue 下始终只有一条机器人评论。
+	"""
 	name = '发布检查结果'
 
 	token = os.environ.get('SHOP_BOT_TOKEN') or os.environ.get('GITHUB_TOKEN') or ''
@@ -627,7 +655,9 @@ def publish_comment(issue_number: str, body: str) -> Check:
 	except (urllib.error.URLError, OSError) as exc:
 		return Check(name, False, f'无法连接 GitHub API：{exc}')
 
-	payload = {'body': body}
+	# 正文以隐藏标记开头，便于下次定位到同一条评论后整条覆盖
+	final_body = body if COMMENT_MARKER in body else f'{COMMENT_MARKER}\n{body}'
+	payload = {'body': final_body}
 	try:
 		if existing_comment_id is not None:
 			_api_request(
@@ -706,6 +736,30 @@ def update_issue_body(issue_number: str, body: str, expected: str | None = None)
 		return f'更新 Issue 正文失败（HTTP {exc.code}）：{truncate(detail, 500)}'
 	except (urllib.error.URLError, OSError) as exc:
 		return f'更新 Issue 正文失败：{exc}'
+
+	return ''
+
+
+def close_issue(issue_number: str, reason: str = 'completed') -> str:
+	"""关闭 Issue，返回错误信息（空串表示成功）。
+
+	``reason`` 可以是 ``completed``（已完成）或 ``not_planned``（不处理）。
+	收录成功后调用，把「上架完成」的 Issue 自动归档。
+	"""
+	token, repo_slug, api_url = _github_api_context()
+	if not issue_number or not str(issue_number).isdigit():
+		return '缺少有效的 Issue 编号，跳过关闭'
+	if not token or not repo_slug:
+		return '缺少 Token 或 GITHUB_REPOSITORY'
+
+	url = f'{api_url}/repos/{repo_slug}/issues/{issue_number}'
+	try:
+		_api_request('PATCH', url, token, {'state': 'closed', 'state_reason': reason})
+	except urllib.error.HTTPError as exc:
+		detail = exc.read().decode('utf-8', 'replace') if exc.fp else str(exc)
+		return f'关闭 Issue 失败（HTTP {exc.code}）：{truncate(detail, 500)}'
+	except (urllib.error.URLError, OSError) as exc:
+		return f'关闭 Issue 失败：{exc}'
 
 	return ''
 

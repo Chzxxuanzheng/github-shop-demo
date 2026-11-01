@@ -1,0 +1,70 @@
+name: 组件审核通过收录
+
+# 触发时机：
+#   - Issue 被打上「审核通过」标签（人工审核完毕，正式上架）
+# 只有标签名完全等于下面的 APPROVE_LABEL 才会执行，避免其它标签误触发。
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  # 需要对 items.json 提交并推送，因此要 contents: write
+  contents: write
+  # 需要回写 Issue 评论
+  issues: write
+
+env:
+  # 触发收录的标签名，与 if 判断保持一致
+  APPROVE_LABEL: 审核通过
+
+# 同一 Issue 串行执行：审核标签被连续打/取消时不会并发写入 items.json
+concurrency:
+  group: comp-publish-approve-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    name: 收录组件
+    # 只处理「审核通过」标签，且只处理发布组件的 Issue（表单校验过的那些）
+    if: >-
+      github.event.label.name == '审核通过' &&
+      (startsWith(github.event.issue.title, 'Component:') ||
+      contains(github.event.issue.body, '仓库连接'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出商店仓库
+        uses: actions/checkout@v4
+        with:
+          # 需要完整历史以便 push 失败时基于远端最新内容重新合并
+          fetch-depth: 0
+          # 保留凭据，后面 git push 直接复用 GITHUB_TOKEN
+          persist-credentials: true
+
+      - name: 准备 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 保存 Issue 正文
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          mkdir -p .ci-out
+          printf '%s' "$ISSUE_BODY" > .ci-out/issue-body.md
+
+      - name: 校验并写入 items.json
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/approve_publish.py \
+            --issue-number "$ISSUE_NUMBER" \
+            --label-name "$LABEL_NAME" \
+            --issue-body-file .ci-out/issue-body.md \
+            --items items.json \
+            --render-out .ci-out/comment.md \
+            --publish-comment \
+            --close-issue
