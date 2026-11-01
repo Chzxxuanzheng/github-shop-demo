@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "id": "demo",
+    "name": "组件demo",
+    "desc": "一个用于测试的东西啦",
+    "author": "Mr.Lee",
+    "enter": "./src/main.py",
+    "repo": "https://github.com/Chzxxuanzheng/github-shop-item-demo-copy",
+    "issue": 1,
+    "revision": "2e0b349ac59b0f8d9b2a72f6bc73cf8e9e04a9bb",
+    "added_at": "2026-11-01T02:19:52+00:00"
+  }
+]
