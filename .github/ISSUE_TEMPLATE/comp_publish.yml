@@ -23,6 +23,9 @@ body:
       value: |
         其实还可以要求填点其他东西...但是直接去仓库里读就行了。
 
+        机器人会去你的仓库里读取 `meta.json`，并校验 `id` / `name` / `desc` / `author` / `enter`
+        是否齐全、`id` 是否已被占用，以及 `enter` 指向的 Python 脚本能否正常导入运行。
+
   - type: checkboxes
     attributes:
       label: 最终确认
@@ -38,5 +41,8 @@ body:
   - type: checkboxes
     attributes:
       label: 运行自动检测
+      description: 勾选并保存后开始检查。运行期间该项会显示为「自动化测试正在运行」，结束后自动取消勾选。
       options:
+        # 只有勾选这一项才会真正执行检查，其它编辑不会触发校验。
+        # 运行中机器人会把文案改为「自动化测试正在运行」，结束时恢复原文案并去掉勾选。
         - label: 点我(重新)运行自动化测试

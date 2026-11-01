@@ -1,0 +1,62 @@
+name: 组件发布检查
+
+# 触发时机：
+#   - Issue 被创建（新建发布申请）
+#   - Issue 被编辑（勾选「重新运行自动化测试」、修改仓库地址等）
+# 只处理「发布组件」表单产生的 Issue，避免打扰普通 Issue。
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+# 同一 Issue 串行执行，防止CI没跑完时编辑评论时多个CI并发处理
+concurrency:
+  group: comp-publish-check-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 校验组件
+    if: >-
+      startsWith(github.event.issue.title, 'Component:') ||
+      contains(github.event.issue.body, '仓库连接')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      # 默认使用仓库自带的 GITHUB_TOKEN 读写 Issue 评论
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 若组件都在本组织内且需要私有仓库读权限，可在此填入具备 repo 读权限的 PAT
+      # SHOP_BOT_TOKEN: ${{ secrets.SHOP_BOT_TOKEN }}
+
+    steps:
+      - name: 检出商店仓库
+        uses: actions/checkout@v4
+
+      - name: 准备 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 保存 Issue 正文
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          mkdir -p .ci-out
+          printf '%s' "$ISSUE_BODY" > .ci-out/issue-body.md
+
+      - name: 校验组件并回写 Issue
+        # 运行一个检查 + 读写Issue的脚本
+        run: |
+          python3 .github/scripts/check_publish.py \
+            --issue-body-file .ci-out/issue-body.md \
+            --issue-number "$ISSUE_NUMBER" \
+            --items items.json \
+            --require-checkbox \
+            --issue-state \
+            --render-out .ci-out/comment.md \
+            --publish-comment
